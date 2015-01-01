@@ -1,5 +1,3 @@
-require 'digest/md5'
-
 module VagrantPlugins
   module ProviderKvm
     class SyncedFolder < Vagrant.plugin("2", :synced_folder)
@@ -14,10 +12,8 @@ module VagrantPlugins
           # access_mode can be squash, mapped, or passthrough
           accessmode = data.has_key?(:access_mode)? data[:access_mode] : 'squash'
           accessmode = 'squash' unless accessmode == 'mapped' || accessmode == 'passthrough'
-          # tag maximum len is 31
-          tag = Digest::MD5.new.update(id).to_s[0,31]
           defs << {
-            :mount_tag => tag,
+            :mount_tag => id,
             :hostpath => data[:hostpath].to_s,
             :accessmode => accessmode
           }

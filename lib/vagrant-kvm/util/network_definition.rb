@@ -19,25 +19,37 @@ module VagrantPlugins
               :start => "192.168.123.100",
               :end => "192.168.123.200",
             },
+            :forward_dev => nil,
+            :bridge_name => nil,
             :hosts => [],
             name: name,
           }
 
           if definition
             doc = REXML::Document.new definition
+            # mandatory fields
+            set(:base_ip, doc.elements["/network/ip"].attributes["address"])
+            set(:netmask, doc.elements["/network/ip"].attributes["netmask"])
+            # optional fields
             if doc.elements["/network/forward"]
-              set(:forward, doc.elements["/network/forward"].attributes["mode"]) 
+              set(:forward, doc.elements["/network/forward"].attributes["mode"])
+              if dev = doc.elements["/network/forward"].attributes["dev"]
+                set(:forward_dev, dev)
+              end
             end
-
             if doc.elements["/network/domain"]
               set(:domain_name, doc.elements["/network/domain"].attributes["name"]) 
             end
-            set(:base_ip, doc.elements["/network/ip"].attributes["address"])
-            set(:netmask, doc.elements["/network/ip"].attributes["netmask"])
-            set(:range, {
-              :start => doc.elements["/network/ip/dhcp/range"].attributes["start"],
-              :end => doc.elements["/network/ip/dhcp/range"].attributes["end"]
-            })
+            if doc.elements["/network/bridge"]
+              set(:bridge_name, doc.elements["/network/bridge"].attributes["name"])
+            end
+            if doc.elements["/network/ip/dhcp/range"]
+              set(:range, {
+                :start => doc.elements["/network/ip/dhcp/range"].attributes["start"],
+                :end => doc.elements["/network/ip/dhcp/range"].attributes["end"]
+              })
+            end
+            # dhcp static asignments
             hosts = []
             doc.elements.each("/network/ip/dhcp/host") do |host|
               hosts << {
@@ -66,17 +78,6 @@ module VagrantPlugins
           xml = ""
           hosts.each do |host|
             xml = xml + "<host mac='#{host[:mac]}' name='#{host[:name]}' ip='#{host[:ip]}' />"
-          end
-          xml
-        end
-
-        # Returns xml definition for one host
-        def get_host_xml(mac)
-          xml = ""
-          hosts.each do |host|
-            if host[:mac] == mac
-             return "<host mac='#{host[:mac]}' name='#{host[:name]}' ip='#{host[:ip]}' />"
-            end
           end
           xml
         end

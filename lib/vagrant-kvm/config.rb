@@ -1,5 +1,3 @@
-require 'etc'
-
 module VagrantPlugins
   module ProviderKvm
     class Config < Vagrant.plugin("2", :config)
@@ -17,16 +15,6 @@ module VagrantPlugins
       #
       # @return [String]
       attr_accessor :name
-
-      # The defined network adapters.
-      #
-      # @return [Hash]
-      attr_reader :network_adapters
-
-      # The storage pool to use
-      #
-      # @return [String]
-      attr_accessor :storage_pool
 
       # The VM image format
       #
@@ -64,12 +52,38 @@ module VagrantPlugins
       #
       # @return [String]
       attr_accessor :core_number
+
+      # VNC parameters
+      #
       attr_accessor :vnc_port
       attr_accessor :vnc_autoport
       attr_accessor :vnc_password
+
+      # Domain machine type
+      #
+      # list are retrieved by `qemu -machine help`
+      # default: pc-1.1
+      #
+      # @return [String]
       attr_accessor :machine_type
+
+      # Network device model
+      #
+      # default: virtio
+      # valid types: "virtio", "i82551", "i82557b", "i82559er", "ne2k_pci",
+      #  "ne2k_isa", "pcnet", "rtl8139", "e1000", "smc91c111", "lance", "mcf_fec"
+      #
+      # @return [String]
       attr_accessor :network_model
+
+      # Video device model
+      #
+      # @return [String]
       attr_accessor :video_model
+
+      # enable sound
+      #
+      # @return [Boolean]
       attr_accessor :sound
       attr_accessor :virtio_rng
 
@@ -79,18 +93,15 @@ module VagrantPlugins
       # @return [String]
       attr_accessor :disk_bus
 
-      # Security labelling
-      # default: off
+      # use pause instead of suspend
       #
-      # @return [String]
-      attr_accessor :seclabel
+      # @return [Boolean]
       attr_accessor :force_pause
 
       def initialize
         @customizations   = []
         @name             = UNSET_VALUE
         @gui              = UNSET_VALUE
-        @storage_pool     = UNSET_VALUE
         @image_type       = UNSET_VALUE
         @image_mode       = UNSET_VALUE
         @qemu_bin         = UNSET_VALUE
@@ -133,9 +144,6 @@ module VagrantPlugins
         @name = nil if @name == UNSET_VALUE
         # Default is to not show a GUI
         @gui = false if @gui == UNSET_VALUE
-        # Default is a storage pool we create for vagrant
-        login = Etc.getlogin
-        @storage_pool = 'vagrant-'+login.to_s if @storage_pool == UNSET_VALUE
         # Default image type is a sparsed raw
         @image_type = 'qcow2' if @image_type == UNSET_VALUE
         case @image_mode

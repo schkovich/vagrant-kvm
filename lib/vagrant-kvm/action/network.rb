@@ -17,7 +17,7 @@ module VagrantPlugins
 
           @env[:ui].info I18n.t("vagrant.actions.vm.network.preparing")
           create_or_start_default_network!
-          create_or_update_private_network!
+          create_or_update_network!
 
           @app.call(env)
         end
@@ -37,8 +37,14 @@ module VagrantPlugins
           )
         end
 
-        def create_or_update_private_network!
-          # enumerate private network options
+        def create_or_update_network!
+          # enumerate network options
+          @env[:machine].config.vm.networks.each do |type, network_options|
+            if type == :public_network
+              network_options[:mode] = 'bridge'
+              add_network_host(network_options)
+            end
+          end
           private_network_options = []
           @env[:machine].config.vm.networks.each do |type, network_options|
             private_network_options << network_options if type == :private_network
@@ -47,7 +53,7 @@ module VagrantPlugins
           private_network_options.each_with_index do |option,index|
             option = set_private_network_options(option)
             if check_private_network_segment(option)
-              add_private_network_host(option, index)
+              add_network_host(option, index)
             else
               @logger.info ("Ignore invalid private network definition.")
             end
@@ -74,21 +80,35 @@ module VagrantPlugins
           end
         end
 
-        def add_private_network_host(option, index)
-            mac = @env[:machine].provider.driver.generate_mac_address
-            option[:hosts]= [{
-              :mac => mac,
-              :name => get_host_name,
-              :ip => option[:ip]
-            }]
-            addr = option[:ip].split(".")
-            nic = { :mac => mac,
+        def add_network_host(option, index)
+          case option[:mode]
+          when 'user'
+            # fixme
+          when 'nat'
+            mac = random_mac
+            @env[:machine].provider.driver.add_nic(
+                    :mac => mac,
                     :name=> "eth"+(index+1).to_s,
-                    :network => "vagrant-"+addr[2].to_s,
+                    :network => get_network_name(option[:ip]),
                     :type => 'network',
+                    :model => 'virtio')
+            option[:hosts]= [{
+                    :mac => mac,
+                    :name => get_host_name,
+                    :ip => option[:ip]}]
+            @env[:machine].provider.driver.create_network(option)
+          when 'bridge'
+            nic = { :mac => random_mac,
+                    :name=> "eth"+(index+1).to_s,
+                    :network => "vagrant-bridged",
+                    :type => 'bridge',
                     :model => 'virtio'}
             @env[:machine].provider.driver.add_nic(nic)
             @env[:machine].provider.driver.create_network(option)
+          else
+            # not support other types
+            @logger.info("unknown network types specified - ignore")
+          end
         end
 
         def select_default_ip
@@ -133,11 +153,36 @@ module VagrantPlugins
               :base_ip => base_ip,
               :netmask => "255.255.255.0",
               :range   => range,
+              :mode    => 'nat',
               :name    => "vagrant-" + addr[2].to_s,
+              :bridge_num  => get_next_bridge_num,
               :domain_name => "vagrant.local"
             }.merge(options)
           end
           options
+        end
+
+        def get_next_bridge_num
+          num = @env[:machine].provider.driver.get_max_bridge_num
+          num = num + 1
+        end
+
+        def add_public_network(options)
+          options = {
+            :mode => 'bridge',
+            :bridge_num => get_next_bridge_num,
+            :name => "vagrant-bridged",
+            }.merge(options)
+          @env[:machine].provider.driver.enable_bridged_network(options)
+        end
+
+        def random_mac
+          rng = Random.new(Time.now.to_i)
+          mac = [0x00, 0x16, 0x3e,
+                rng.rand(128),
+                rng.rand(256),
+                rng.rand(256)]
+          mac.map {|x| "%02x" % x}.join(":")
         end
 
         def format_mac(mac)

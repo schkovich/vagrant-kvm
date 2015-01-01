@@ -1,13 +1,24 @@
 <network>
   <name><%= name %></name>
   <forward mode='<%= forward %>'/>
+  <% if bridge %>
+  <bridge name='<%= bridge %>' stp='on' delay='0' />
+  <% end %>
+  <% if domain_name %>
   <domain name='<%= domain_name %>'/>
+  <% end %>
+  <% if base_ip %>
   <ip address='<%= base_ip %>' netmask='<%= netmask %>'>
+   <% if range || (hosts.length > 0) %>
     <dhcp>
+    <% if range %>
     <range start='<%= range[:start] %>' end='<%= range[:end] %>' />
+    <% end %>
     <% for host in hosts %>
       <host mac='<%= host[:mac] %>' name='<%= host[:name] %>' ip='<%= host[:ip] %>' />
     <% end %>
     </dhcp>
+   <% end %>
   </ip>
+  <% end %>
 </network>
