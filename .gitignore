@@ -7,11 +7,6 @@
 pkg/*
 tags
 Gemfile.lock
-vendor/ruby
-
-# Rbenv/RVM
-.ruby-version
-.rvmrc
 
 # Vagrant
 .vagrant
@@ -19,3 +14,6 @@ Vagrantfile
 !example_box/Vagrantfile
 .rvmrc
 *.box
+
+# RubyMine
+.idea
