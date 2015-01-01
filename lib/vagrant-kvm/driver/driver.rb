@@ -1,6 +1,7 @@
 require 'libvirt'
 require 'log4r'
 require 'pathname'
+require "rexml/document"
 
 module VagrantPlugins
   module ProviderKvm
@@ -30,12 +31,16 @@ module VagrantPlugins
         # The UUID of the virtual machine we represent
         attr_reader :uuid
 
+        # Vagrant 1.5.x pool migration
+        attr_reader :pool_migrate
+
         def initialize(uuid=nil)
           @logger = Log4r::Logger.new("vagrant::provider::kvm::driver")
           @uuid = uuid
           # This should be configurable
           @pool_name = "vagrant"
           @virsh_path = "virsh"
+          @pool_migrate = false
           @bridged_network = nil
           @bridge_number = 0
 
@@ -115,6 +120,7 @@ module VagrantPlugins
         end
 
         def delete
+          cleanup_networks
           domain = @conn.lookup_domain_by_uuid(@uuid)
           definition = Util::VmDefinition.new(domain.xml_desc)
           volume = @pool.lookup_volume_by_path(definition.attributes[:disk])
@@ -153,7 +159,9 @@ module VagrantPlugins
             :qemu_bin => "/usr/bin/qemu",
             :disk => volume_path,
             :network => 'vagrant',
-            :name => @name
+            :name => @name,
+            :uuid => nil,
+            :mac => generate_mac_address
           }.merge(args)
           args.merge!(:virtio_rng => nil) if @conn.version.to_i < 1003000  # virtio_rng supported in 1.3.0+
           definition.update(args)
@@ -170,6 +178,7 @@ module VagrantPlugins
           # Get the network if it exists
           network_name = config[:name]
           hosts = config[:hosts]
+          @logger.info("empty host!") unless hosts
           begin
             network = @conn.lookup_network_by_name(network_name)
             definition = Util::NetworkDefinition.new(network_name,
@@ -285,56 +294,140 @@ module VagrantPlugins
           get_default_ip
         end
 
-        # Initialize or create storage pool
-        def init_storage(base_path, uid, gid)
-          # Storage pool doesn't exist so we create it
-          # create dir if it doesn't exist
-          # if we let libvirt create the dir it is owned by root
-          pool_path = File.join(base_path, "/storage-pool")
-          FileUtils.mkpath(pool_path) unless Dir.exists?(pool_path)
-          @pool = init_storage_directory(
-                     :pool_path => pool_path,
-                     :pool_name => @pool_name,
-                     :owner => uid, :group=>gid, :mode=>'755')
+        # Remove DHCP entries from Networks
+        def cleanup_networks
+          # Get list of NICs
+          domain = @conn.lookup_domain_by_uuid(@uuid)
+          definition = Util::VmDefinition.new(domain.xml_desc)
+          nics = definition.get_all_nics
+          nics.each do |nic|
+            # for each nic remove dhcp entry from network
+            network = @conn.lookup_network_by_name(nic[:network])
+            network_def = Util::NetworkDefinition.new(nic[:network], network.xml_desc)
+
+            @logger.info("Removing host entry from network #{nic[:network]}")
+            @logger.debug("Removing #{nic[:mac]} defined as:\n#{network_def.get_host_xml(nic[:mac])}")
+            # 2 should be Libvirt::Network::NETWORK_UPDATE_COMMAND_DELETE
+            # but fails as undefined? XXX
+            network.update(2,
+                           Libvirt::Network::NETWORK_SECTION_IP_DHCP_HOST,
+                           -1,
+                           network_def.get_host_xml(nic[:mac]),
+                           Libvirt::Network::NETWORK_UPDATE_AFFECT_CURRENT
+            )
+
+            # if no entries left, destroy and undefine the network
+            network = @conn.lookup_network_by_name(nic[:network])
+            network_def = Util::NetworkDefinition.new(nic[:network], network.xml_desc)
+            if network_def.hosts.count == 0
+              @logger.info("Network #{nic[:network]} has no hosts left, deleting.")
+              network.destroy
+              network.undefine
+            end
+          end
         end
 
-        def init_storage_directory(args={})
+        # Activate the driver's storage pool
+        def activate_storage_pool(pool_name)
+          # Get storage pool if it exists
+          @pool = init_storage_pool(pool_name)
+          # check neccesity of migrating to new storage pool format
+          # this is happen when user has already used vagrant-kvm 0.1.5 and after
+          # XXX needs clarification
+          check_migrate_box_storage_pool
+          @logger.info("Retrieving storage pool #{pool_name}")
+        end
+
+        # Initialize or Create a new storage pool
+        def init_storage_pool(pool_name, pool_path='/tmp', dir_mode='0755')
           begin
-            # Get the storage pool if it exists
-            pool = @conn.lookup_storage_pool_by_name(args[:pool_name])
-            @logger.info("Init storage pool #{args[:pool_name]}")
+            # Try to retrieve the storage pool
+            pool = @conn.lookup_storage_pool_by_name(pool_name)
+            @logger.info("Activating storage pool #{pool_name}")
+            pool.create unless pool.active?
+            pool.refresh
+            pool
           rescue Libvirt::RetrieveError
-             @logger.info("Init storage pool with owner: #{args[:owner]}")
+            create_storage_pool(pool_name, pool_path, dir_mode)
+          end
+        end
+
+        def create_storage_pool(pool_name, pool_path, dir_mode)
+          @logger.info("Creating new storage pool #{pool_name} in #{pool_path}")
+          # create dir if it doesn't exist
+          FileUtils.mkpath(pool_path) unless Dir.exists?(pool_path)
              storage_pool_xml = <<-EOF
               <pool type="dir">
-              <name>#{args[:pool_name]}</name>
+              <name>#{pool_name}</name>
               <target>
-                <path>#{args[:pool_path]}</path>
+                <path>#{pool_path}</path>
                 <permissions>
-                 <owner>#{args[:owner]}</owner>
-                 <group>#{args[:group]}</group>
-                 <mode>#{args[:mode]}</mode>
+                 <owner>#{Process.uid}</owner>
+                 <group>#{Process.gid}</group>
+                 <mode>#{dir_mode}</mode>
                 </permissions>
               </target>
               </pool>
              EOF
-            pool = @conn.define_storage_pool_xml(storage_pool_xml)
-            pool.build
-            @logger.info("Creating storage pool #{args[:pool_name]} in #{args[:pool_path]}")
-          end
-          pool.create unless pool.active?
+          # Create transient pool
+          # Pools defined here will be removed after system reboot.
+          @logger.debug("Creating storage pool with XML:\n #{storage_pool_xml}")
+          begin
+            pool = @conn.create_storage_pool_xml(storage_pool_xml)
+            pool.build unless pool.active?
           pool.refresh
           pool
+          rescue
+            # check conflict and shutdown old pool
+            defined_pool_list = @conn.list_storage_pools
+            defined_pool_list.each do |defined_pool_name|
+              defined_pool = @conn.lookup_storage_pool_by_name(defined_pool_name)
+              defined_pool_doc = REXML::Document.new defined_pool.xml_desc
+              defined_pool_path = File.expand_path(defined_pool_doc.elements["/pool/target/path"].text)
+              @logger.debug("check whether conflict with #{defined_pool_name} on #{defined_pool_path}")
+              if defined_pool_path == File.expand_path(pool_path)
+                defined_pool.destroy
+                pool = @conn.create_storage_pool_xml(storage_pool_xml)
+                pool.build unless pool.active?
+                pool.refresh
+                return pool
+        end
+            end
+            raise Errors::KvmFailStoragePool
+          end
+        end
+
+        def check_migrate_box_storage_pool
+          # Migration to new pool directory structure in vagrant 1.5.x
+          # delete if created with <vagrant-1.4.x
+          if Vagrant::VERSION >= "1.5.0"
+            begin
+              if @pool && @pool.persistent?
+                # pool was made by vagrant-kvm-0.1.5 and before
+                # vagrant-kvm-0.1.5 NOT working in vagrant 1.5.x
+                # so need migrate
+                @pool_migrate = true
+              end
+            rescue Libvirt::RetrieveError
+              raise Errors::KvmFailStoragePool
+            end
+          end
         end
 
         def free_storage_pool(pool_name)
           begin
             pool = @conn.lookup_storage_pool_by_name(pool_name)
+            # XXX  check reference counter for parallel action?
             pool.destroy
             pool.free
           rescue Libvirt::RetrieveError
             @logger.info("fail to free storage pool #{pool_name}")
           end
+        end
+
+        def storage_pool_path
+          doc = REXML::Document.new @pool.xml_desc
+          doc.elements["/pool/target/path"].text
         end
 
         def lookup_volume_path_by_name(volume_name)
@@ -427,6 +520,16 @@ module VagrantPlugins
             return :poweroff
           end
           VM_STATE[state]
+        end
+
+        # return a new (random) MAC address
+        def generate_mac_address
+          # Don't use Random.new, it causes collisions
+          mac = [0x52, 0x54, 0x00, # KVM Vendor prefix
+                Random.rand(256),
+                Random.rand(256),
+                Random.rand(256)]
+          mac.map {|x| "%02x" % x}.join(":")
         end
 
         def read_mac_address
@@ -735,16 +838,6 @@ module VagrantPlugins
           if @conn.version.to_i < 1001000
             raise Errors::KvmInvalidVersion,
               :actual => version, :required => ">= 1.1.0"
-          end
-        end
-
-        def init_storage_pool!
-          # Get storage pool if it exists
-          begin
-            @pool = @conn.lookup_storage_pool_by_name(@pool_name)
-            @logger.info("Init storage pool #{@pool_name}")
-          rescue Libvirt::RetrieveError
-            # storage pool doesn't exist yet
           end
         end
 

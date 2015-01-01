@@ -43,7 +43,7 @@ module VagrantPlugins
             :network      => 'vagrant',
             :network_model => 'virtio',
             :video_model  => 'cirrus',
-            :secmodel     => 'dac',
+            :secmodel     => nil,
             :sound        => nil,
             :nics         => [],
           }
@@ -66,6 +66,10 @@ module VagrantPlugins
             :video_model => doc.elements["/domain/devices/video/model"].attributes["type"],
             :disk_bus    => doc.elements["//devices/disk/target"].attributes["bus"]
           })
+          # Security Model
+          doc.elements.each("/domain/seclabel") do |seclabel|
+            update({:secmodel => seclabel.attributes["model"]})
+          end
           # NETWORK Interfaces
           nics = []
           doc.elements.each("//devices/interface") do |intf|
@@ -73,7 +77,6 @@ module VagrantPlugins
             mac         = intf.elements["mac"].attributes["address"]
             type        = intf.attributes["type"]
             model       = intf.elements["model"].attributes["type"]
-
             if network == 'vagrant' then
               update({:network_model => model})
             else
@@ -82,9 +85,9 @@ module VagrantPlugins
                 nics << { :type => 'user' }
               when 'network'
                 nics <<  {
-                  :type    => 'network',
                   :network => network,
                   :mac     => format_mac(mac),
+                  :type    => type,
                   :model   => model,
                 }
               when 'bridge'
@@ -144,16 +147,31 @@ module VagrantPlugins
                 attributes.merge!(:memory_size => get_memory("KiB"),
                                   :memory_unit => "KiB")
                 )
+          # not inject nics to definition when called for export
+          # FIXME: bad design
+          #   export call here with (uuid = nil)
+          if get(:uuid)
           inject_nics(xml)
+          else
+            xml
+          end
         end
 
+        # inject nics into XML
+        #
+        # primary NIC is 0000:00:03.0
+        # and injected to 0000:01:01.0 ~ 0000:00:1f.0
+        #
         def inject_nics(xml)
           nics=get(:nics)
           doc = REXML::Document.new xml
           primary_nic = doc.elements["//interface"]
-          funcid = 1
+          devid = 1
           nics.each do |nic|
             next if nic[:mac] == get(:mac)
+            #XXX: support maximum 31 additional NICs
+            #     because of a PCI standard limitation.
+            break if devid > 31
 
             nic[:type] = 'network' unless nic[:type]
             nic[:model] = 'virtio' unless nic[:model]
@@ -168,10 +186,11 @@ module VagrantPlugins
             e.add_attributes({'type' => nic[:type]})
             e.add_element('mac', {'address' => nic[:mac]})
             e.add_element('model', {'type' => nic[:model]})
-            e.add_element('address',{'type' => 'pci','domain' => '0x0000', 'bus' => '0x00',
-             'slot' => '0x0a', 'function' => "0x%x" % funcid})
+            e.add_element('address',{'type' => 'pci','domain' => '0x0000',
+             'bus' => '0x01', # bus 0x01 is for NICs, 0x02 is for plan9fs
+             'slot' => '0x%02x'% devid, 'function' => "0"})
             primary_nic.next_sibling = e
-            funcid = funcid + 1
+            devid = devid + 1
           end
           doc.to_s
         end
@@ -204,6 +223,19 @@ module VagrantPlugins
                 :model   => new_nic[:model]
                 }
           set(:nics, nics)
+        end
+
+        # Return list of NICs including primary NIC
+        # FIXME we need to treat primary as ordinary NIC
+        def get_all_nics
+          nics = get(:nics)
+          nics << {
+                :mac     => get(:mac),
+                :network => get(:network),
+                # :type    => get(:type), XXX need to manage model
+                :model   => get(:network_model)
+                }
+          nics
         end
 
         def get_memory(unit="bytes")

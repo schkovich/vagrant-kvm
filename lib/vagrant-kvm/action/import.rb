@@ -41,10 +41,53 @@ module VagrantPlugins
 
           args[:disk_bus]   = provider_config.disk_bus if provider_config.disk_bus
 
+          # Permission/Security Model detection
+          driver = @env[:machine].provider.driver
+          # defaults
+          args[:userid] = Process.uid.to_s
+          args[:groupid] = Process.gid.to_s
+          args[:dirmode] = '0775'
+          args[:filemode] = '0664'
+          args[:label] = 'virt_image_t'
+          args[:secmodel] = nil
+          # Optional security label
+          if provider_config.seclabel == 'on'
+            # OS specific
+            if driver.host_redhat?
+              # on Redhat/Fedora, permission is controlled
+              # with only SELinux
+              args[:secmodel] = 'selinux'
+              args[:dirmode]  = '0777'
+              args[:filemode] = '0666'
+            elsif driver.host_arch?
+              # XXX: should be configurable
+              args[:secmodel] = 'dac'
+            elsif driver.host_ubuntu?
+              args[:secmodel] = 'apparmor'
+              args[:groupid] = Etc.getgrnam('kvm').gid.to_s
+            elsif driver.host_debian?
+              # XXX: should be configurable
+              args[:secmodel] = 'dac'
+              args[:groupid] = Etc.getgrnam('kvm').gid.to_s
+            end
+          end
+
           # Import the virtual machine
-          storage_path = File.join(@env[:tmp_path],"/storage-pool")
+
+          # Get storage pool directory
+          storage_path = @env[:machine].provider.driver.storage_pool_path
           box_file = @env[:machine].box.directory.join("box.xml").to_s
           raise Errors::KvmBadBoxFormat unless File.file?(box_file)
+
+          # check pool migration necessary?
+          if @env[:machine].provider.driver.pool_migrate
+            @env[:ui].output I18n.t("vagrant_kvm.kvm_spool_problem_inform")
+          end
+
+          # repair directories permission
+          home_path = File.expand_path("../../", @env[:tmp_path])
+          boxes_path = File.expand_path("../boxes/", @env[:tmp_path])
+          repair_permissions!(home_path, boxes_path)
 
           # import box volume
           volume_name = import_volume(storage_path, box_file, args)
@@ -85,32 +128,15 @@ module VagrantPlugins
             box_name = @env[:machine].config.vm.box
             driver = @env[:machine].provider.driver
             userid = Process.uid.to_s
-            groupid = Process.gid.to_s
-            modes = {:dir => '0775', :file => '0664'}
-            label = 'virt_image_t'
-            if driver.host_redhat?
-              # on Redhat/Fedora, permission is controlled
-              # with only SELinux
-              modes = {:dir => '0777',:file => '0666'}
-              secmodel = 'selinux'
-            elsif driver.host_arch?
-              # XXX: should be configurable
-              secmodel = 'dac'
-            elsif driver.host_ubuntu?
-              groupid = Etc.getgrnam('kvm').gid.to_s
-              secmodel='apparmor'
-            elsif driver.host_debian?
-              # XXX: should be configurable
-              groupid = Etc.getgrnam('kvm').gid.to_s
-              secmodel='dac'
-            else
-              # default
-              secmodel='dac'
+            begin
+              # vagrant 1.5+
+              box_version = @env[machine].config.vm.box_version
+              pool_name = 'vagrant_' + userid + '_' + box_name + '_' + box_version.to_s
+            rescue
+              # before varant 1.5
+              pool_name = 'vagrant_' + userid + '_' + box_name
             end
-            pool_name = 'vagrant_' + userid + '_' + box_name
-            driver.init_storage_directory(
-                :pool_path => File.dirname(old_path), :pool_name => pool_name,
-                :owner => userid, :group => groupid, :mode => modes[:dir])
+            driver.init_storage_pool(pool_name, File.dirname(old_path), args[:dirmode])
             driver.create_volume(
                 :disk_name => new_disk,
                 :capacity => box.capacity,
@@ -119,17 +145,36 @@ module VagrantPlugins
                 :box_pool => pool_name,
                 :box_path => old_path,
                 :backing => args[:image_backing],
-                :owner => userid,
-                :group => groupid,
-                :mode => modes[:file],
-                :label => label,
-                :secmodel => secmodel)
+                :owner => args[:userid],
+                :group => args[:groupid],
+                :mode => args[:filemode],
+                :label => args[:label])
             driver.free_storage_pool(pool_name)
           else
             @logger.info "Image type #{args[:image_type]} is not supported"
           end
           # TODO cleanup if interrupted
           new_disk
+        end
+
+        # Repairs $HOME an $HOME/.vagrangt.d/boxes permissions.
+        #
+        # work around for
+        # https://github.com/adrahon/vagrant-kvm/issues/193
+        # https://github.com/adrahon/vagrant-kvm/issues/163
+        # https://github.com/adrahon/vagrant-kvm/issues/130
+        #
+        def repair_permissions!(home_path, boxes_path)
+          # check pathes
+          [home_path, boxes_path].each do |d|
+            s = File::Stat.new(d)
+            @logger.debug("#{d} permission: #{s.mode.to_s(8)}")
+            if (s.mode & 1 == 0)
+              @env[:ui].info I18n.t("vagrant_kvm.repair_permission",:directory => d,
+                :old_mode => sprintf("%o",s.mode), :new_mode => sprintf("%o", s.mode|1))
+              File.chmod(s.mode | 1, d)
+            end
+          end
         end
 
         def recover(env)

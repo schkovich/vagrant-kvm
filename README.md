@@ -39,6 +39,66 @@ It was solved in Ubuntu 14.04(Trusty) and a backported libvirt provided by PPA a
 
 ## Known issues
 
+### Vagrant 1.5 migration
+
+Vagrant 1.5 changes a structure of user boxes directories.
+vagrant-KVM handle box directory as libvirt/qemu temporary spool,
+but Vagrant 1.5 changes it at first time launched.
+
+Unfortunately vagrant-KVM 0.1.5 does not run on Vagrant-1.5.x.
+Users who interested in vagrant-kvm 0.1.5 may use with Vagrant 1.4.x.
+
+This caused problem when following sinario:
+
+1. user use vagrant-kvm 0.1.5 with vagrant-1.4.x
+2. user upgrade vagrant 1.5.x
+3. user upgrade vagrant 0.1.5.1 and after
+
+ We use transient pool instead of persistent one
+in vagrant-kvm 0.1.5.x, 0.1.6 and after
+Pools defined by vagrant-kvm will be removed after system reboot.
+
+We recommend to use following combinations.
+
+- Vagrant 1.3.x or before, and Vagrant-KVM 0.1.4
+
+- Vagrant 1.5.x or after, and  Vagrant-KVM 0.1.5.1 or after
+
+If you are joining test for vagrant-kvm or other reasons you use vagrant-kvm 0.1.5 with vagrant 1.4.x,
+you got `Call to virStoragePoolCreate failed: cannot open path` error, please follow the instructions below.
+Please take care when running commands as root.
+
+1. Upgrade vagrant-kvm to vagrant-kvm  0.1.5.1 or after
+
+2. Clear all storage definitions.
+
+```bash
+$ sudo ls /etc/libvirt/storage/vagrant*
+$ sudo rm /etc/libvirt/storage/vagrant*
+$ sudo ls /etc/libvirt/storage/vagrant*
+```
+
+alternative way:
+
+* open virt-manager
+* connect to localhost
+* right click and open details
+* click storage tab
+* right click 'vagrant*' storage pool and delete it.
+
+3. restart libvirt daemon
+
+Ubuntu/Debian
+```bash
+$ sudo service libvirt-bin restart
+```
+
+Fedora/CentOS/SuSE/Arch
+```bash
+$ sudo systemctl restart libvirtd
+```
+
+
 ### Ubuntu
 Some versions of Ubuntu kernel has a bug that will cause vagrant-kvm
 to fail with a permission error on `vagrant up`. It is a kernel bug with the AppArmor security framework.
@@ -56,7 +116,7 @@ To avoid this, please check and change your home directory and
 child directories permission to permit qemu user access to `~/.vagrant.d/tmp/storage-pool/`
 
 ```bash
-$ chmod go+x /home/<your account>
+$ setfacl -m g:qemu:x /home/<your account>
 ```
 
 Another option is to run qemu/kvm as the root user by changing the
@@ -74,8 +134,8 @@ Then restart libvirtd.
 $ sudo systemctl restart libvirtd
 ```
 
-This may or may not be sufficient to make it work with Fedora, there are still
-some issues for some users on Fedora 20.
+Another option is to specify an existing local storage pool with the
+`storage-pool` option for the KVM provider in your Vagrantfile (see below).
 
 ## Usage
 
@@ -116,11 +176,13 @@ then you can simply run `vagrant up` to use the kvm provider.
 
 There are some provider specific parameter to control VM definition.
 
-* `cpu_model` - cpu architecture: 'i686' or 'x86_64': default is x86_64. Note
+* `cpu_model` - cpu architecture: 'i686' or 'x86\_64': default is x86\_64. Note
   that your base box should specify this.
 * `core_number` - number of cpu cores.
 * `memory_size` - memory size such as 512m, 1GiB, 100000KiB, unit is KiB if
   unspecified.
+* `storage_pool` - specify an existing local storage pool to use instead of
+  vagrant's own.
 * `gui` - boolean for starting VM with VNC enabled.
 * `vnc_port` - The port the VNC server listens to. Default is automatic port
 assignment.
@@ -134,7 +196,7 @@ in this flag being automatically turned on by KVM.
 * `machine_type` - The type of machine to boot. Default is pc-1.2.
 * `network_model` - The model of the network adapter you want to use. Defaults
 to virtio. Can be set to `:default` if you want to use the KVM default setting.
-Possible values include: ne2k_isa i82551 i82557b i82559er ne2k_pci pcnet rtl8139 e1000 virtio.
+Possible values include: ne2k\_isa i82551 i82557b i82559er ne2k\_pci pcnet rtl8139 e1000 virtio.
 * `video_model` - The model of the video adapter. Default to cirrus. Can also be
 set to vga.
 * `image_mode` - Possible value are `clone` or `cow`, defaults to `cow`. If set
@@ -144,6 +206,7 @@ image. This is slower but allows multiple VMs to be booted at the same time.
 * `disk_bus` - disk interface to show virtual disk to guest: 'virtio' or 'sata', 'scsi'
   A box, which is 'mutate'-ed from virtualbox/vmware box, may specify sata/ide for disk bus.
   It may be useful to specify 'virtio' for performance, even when box defaults disk bus as sata/ide/scsi.
+* `seclabel` - enables security labelling using selinux, apparmor, dac... based on the host distribution if set to `on`
 * `force_pause` - use `pause` for `vagrant suspend` instead of `suspend`.
   It keeps resource online but execution is stopped.
   When VM has a device that is not supported `hibernate`, automatically use
@@ -162,7 +225,7 @@ Vagrant-libvirt is a libvirt provider to control machines via the libvirt toolki
 Vagrant-libvirt covers a lot more libvirt options, local and remote hosts and multiple hypervisors,
 such as Xen, LXC and KVM/qemu.
 
-In early 2014, Varant-libvirt only support kvm/qemu in local host, there is no big feature difference.
+In early 2014, Vagrant-libvirt only supports kvm/qemu in local host, there is no big feature difference.
 
 Here are a few difference:
 
@@ -188,7 +251,7 @@ Vagrant-libvirt use qcow2 as disk image.
 ### 3. VNC port/password
 
 Vagrant-kvm allows you to configure how to connect with VNC, which provides virtual guest desktop.
-Vagrant-libvirt is not.
+Vagrant-libvirt does not.
 
 ### 4. Synced folder
 
@@ -199,12 +262,12 @@ without root privilege.
 Vagrant-libvirt provide synced folder with Rsync and NFS.
 They also plan to support virtfs in future.
 
-It is neccesary to fix several bugs in libvirt/qemu to enable
+It is neccesary to fix several bugs in libvirt/qemu to enable the
 virtfs feature in both providers.
 
 ### 5. Snapshots via sahara
 
-Vagrant-kvm plan to support snapshot via sahara.
+Vagrant-kvm plans to support snapshot via sahara.
 We have already proposed to sahara project to add support
 and are waiting for review.
 https://github.com/jedi4ever/sahara/pull/32
@@ -217,11 +280,11 @@ Both are supported by vagrant-mutate as convert target
 
 ### 7. Architecture
 
-Vagrant-kvm control kvm/qemu via ruby-libvirt, libvirt and qemu.
+Vagrant-kvm controls kvm/qemu via ruby-libvirt, libvirt and qemu.
 
-Vagrant-libvirt control machines via fog,
+Vagrant-libvirt controls machines via fog,
 a cloud abstraction library in ruby,
 that is also used by vagrant-aws.
-A fog library control virtual machines on supported platforms and provide
+The fog library controls virtual machines on supported platforms and provides
 control of qemu/kvm machines through ruby-libvirt and libvirt.
 

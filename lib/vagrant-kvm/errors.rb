@@ -19,16 +19,16 @@ module VagrantPlugins
         error_key(:kvm_no_qemu_binary)
       end
 
-      class KvmFailImageConversion < VagrantKVMError
-        error_key(:kvm_fail_image_conversion)
-      end
-
       class KvmBadBoxFormat < VagrantKVMError
         error_key(:kvm_bad_box_format)
       end
 
       class KvmFailedCommand < VagrantKVMError
         error_key(:kvm_failed_command)
+      end
+
+      class KvmFailStoragePool < VagrantKVMError
+        error_key(:kvm_fail_storagepool)
       end
     end
   end

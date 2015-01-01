@@ -12,8 +12,10 @@ module VagrantPlugins
           # access_mode can be squash, mapped, or passthrough
           accessmode = data.has_key?(:access_mode)? data[:access_mode] : 'squash'
           accessmode = 'squash' unless accessmode == 'mapped' || accessmode == 'passthrough'
+          # tag maximum len is 31
+          tag = Digest::MD5.new.update(id).to_s[0,31]
           defs << {
-            :mount_tag => id,
+            :mount_tag => tag,
             :hostpath => data[:hostpath].to_s,
             :accessmode => accessmode
           }

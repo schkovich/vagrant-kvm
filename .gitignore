@@ -6,7 +6,13 @@
 .bundle
 pkg/*
 tags
+tags
 Gemfile.lock
+vendor/ruby
+
+# Rbenv/RVM
+.ruby-version
+.rvmrc
 
 # Vagrant
 .vagrant

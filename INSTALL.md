@@ -11,19 +11,30 @@ dependent ruby-libvirt gems.
 
 This plugin requires
 
-- For KVM:
- * `qemu`, `qemu-kvm`,`libvirt-bin` packages
- * qemu 1.1 and after
- * libvirt 1.0 and after
+#### Either A) All in one:
 
-- For NFS:
- * `nfs-kernel-server`,`nfs-common`,`portmap`
+    apt-get install qemu qemu-kvm libvirt-bin redir dnsmasq-base bridge-utils \
+                    build-essential ruby2.0-dev libvirt-dev libxslt1-dev \
+                    libxml2-dev
 
-- For Networking:
- * `redir` `dnsmasq-base` `bridge-utils`
+#### Or B) Select what you need:
+##### For KVM:
+You need: qemu 1.1 and newer, libvirt 1.0 and newer
 
-- For `ruby-libvirt` gems installation dependency:
- * `build-essential` `ruby2.0-dev` `libvirt-dev` `libxslt1-dev` `libxml2-dev`
+    apt-get install qemu qemu-kvm libvirt-bin
+
+##### For NFS:
+
+    apt-get install nfs-kernel-server nfs-common portmap
+
+##### For Networking:
+
+    apt-get install redir dnsmasq-base bridge-utils
+
+##### For `ruby-libvirt` gems installation dependency:
+
+    apt-get install build-essential ruby2.0-dev libvirt-dev libxslt1-dev \
+                    libxml2-dev
 
 Some kernel version has a bug that causes a permission error on image.
 You are strongly recommended to upgrade a `linux-image` up-to-date.
@@ -45,22 +56,22 @@ to the libvirtd unix group.
 To enable libvirt management access for a user, add them to this group:
 
 ```bash
-$ sudo usermod -G libvirtd  -a ~~usrname~~
+$ sudo usermod -G libvirtd  -a ~~username~~
 ```
 
 ### Fedora/CentOS/RedHat/openSUSE requirements
 
-- For KVM:
-  * `qemu-kvm` `libvirt` `libvirt-daemon-kvm.x86_64`
+#### For KVM:
+    yum install qemu-kvm libvirt libvirt-daemon-kvm.x86_64
 
-- For NFS:
- * `nfs-utils`
+#### For NFS:
+    yum install nfs-utils
 
-- For Networking:
- * `redir`
+#### For Networking:
+    yum install redir
 
-- For `ruby-libvirt` gems installation dependency:
- * `gcc` `make` `rubygem-rake` `ruby-devel` `libvirt-devel` `libxslt-devel` `libxml2-devel`
+#### For `ruby-libvirt` gems installation dependency:
+    yum install gcc make rubygem-rake ruby-devel libvirt-devel libxslt-devel libxml2-devel
 
 ### Fedora preparation
 
@@ -89,7 +100,7 @@ and box directory.
 $ sudo yum install policycoreutils-python
 $ semanage fcontext -a -t virt_image_t "~/.vagrant.d/tmp/storage-pool(/.*)?"
 $ restorecon -R ~/.vagrant.d/tmp/storage-pool
-$ semanage fcontext -a -t virt_image_t "~/.vagrant.d/boxes(/.*)?"
+$ semanage fcontext -a -t virt_context_t "~/.vagrant.d/boxes(/.*)?"
 $ restorecon -R ~/.vagrant.d/boxes
 ```
 
@@ -212,7 +223,7 @@ Home directory permission is too conservative for Vagrant with kvm.
 Please relax your home directory permission.
 
 ```bash
-$ chmod o+x $HOME
+$ setfacl -m g:qemu:x /home/~~username~~
 ```
 
 To use with Vagrant, you may need to configure libvirt for non-root user to run KVM.

@@ -16,7 +16,8 @@ module VagrantPlugins
             machine.communicate.sudo("mkdir -p #{expanded_guest_path}")
 
             # Mount
-            mount_tag = name.dup
+            # tag maximum len is 31
+            mount_tag = Digest::MD5.new.update(name).to_s[0,31]
 
             mount_opts="-o trans=virtio"
             mount_opts += ",access=#{options[:owner]}" if options[:owner]

@@ -13,7 +13,6 @@ module VagrantPlugins
       # a bootup (i.e. not saved).
       def self.action_boot
         Vagrant::Action::Builder.new.tap do |b|
-          b.use Network
           b.use Provision
           b.use Vagrant::Action::Builtin::HandleForwardedPortCollisions
           b.use PrepareNFSValidIds
@@ -52,6 +51,7 @@ module VagrantPlugins
                 b3.use PrepareNFSValidIds
                 b3.use SyncedFolderCleanup
                 b3.use PrepareNFSSettings
+                b3.use InitStoragePool
                 b3.use Destroy
               else
                 b3.use MessageWillNotDestroy
@@ -242,17 +242,23 @@ module VagrantPlugins
       def self.action_up
         Vagrant::Action::Builder.new.tap do |b|
           b.use CheckKvm
-          b.use SetName
           b.use ConfigValidate
           b.use InitStoragePool
           b.use Call, Created do |env, b2|
             # If the VM is NOT created yet, then do the setup steps
             if !env[:result]
+              if Vagrant::VERSION < "1.5.0"
               b2.use CheckBox
+              else
+                b2.use HandleBox
+              end
               b2.use SetName
               b2.use Customize, "pre-import"
+              # we need to init storage again after driver is reloaded
+              # XXX there must be a better way
+              b2.use InitStoragePool
               b2.use Import
-              b2.use MatchMACAddress
+              b2.use Network
             end
           end
           b.use action_start
@@ -279,7 +285,6 @@ module VagrantPlugins
       autoload :IsPaused, action_root.join("is_paused")
       autoload :IsRunning, action_root.join("is_running")
       autoload :IsSaved, action_root.join("is_saved")
-      autoload :MatchMACAddress, action_root.join("match_mac_address")
       autoload :MessageNotCreated, action_root.join("message_not_created")
       autoload :MessageNotRunning, action_root.join("message_not_running")
       autoload :MessageWillNotDestroy, action_root.join("message_will_not_destroy")
